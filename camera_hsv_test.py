@@ -37,7 +37,7 @@ cv2.createTrackbar('V low', 'image', 35, 255, v_low)
 cv2.createTrackbar('V high', 'image', 255, 255, v_high)
 cap = cv2.VideoCapture(1)
 while True:
-    frame = cv2.imread("D:\\desktop\\2.jpg")
+    ret, frame = cap.read()
     dst = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # BGR×ªHSV
     dst = cv2.inRange(dst, hsv_low, hsv_high) # Í¨¹ýHSVµÄ¸ßµÍãÐÖµ£¬ÌáÈ¡Í¼Ïñ²¿·ÖÇøÓò
     dst = cv2.medianBlur(dst, 5)
