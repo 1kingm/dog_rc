@@ -1,16 +1,16 @@
 import cv2
 import numpy as np
 import math
-from typing import List
-from imutils import perspective
+import task
 
-video_name = 1
-cap = cv2.VideoCapture(1)
 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # 膨胀腐蚀操作卷积核大小
 hsv_low = np.array([15, 42, 172])
 hsv_high = np.array([45, 116, 255])
 _jump1 = False
 _jump2 = False
+goal = 2
+counter, counter2 = 0, 0
+counter_bool, counter2_bool = False, False
 
 
 def length_line(dot1, dot2):
@@ -22,6 +22,26 @@ def nei_abf(dot1, dot2):  # 计算斜率和截距
     Nei = (dot1[0] - dot2[0]) / (dot1[1] - dot2[1])  # 斜率,
     abf = dot1[0] - Nei * dot1[1]  # 截距
     return [Nei, abf]  # x/y 默认斜率算法
+
+
+def init_adjust(nei_med, x):  # nei_med 是斜率
+    global counter2, counter2_bool
+    if x < 330:
+        # print("axs")
+        counter2_bool = False
+        return task.ROTAT_LEFT, nei_med, x
+    elif x > 400:
+        # print("xaxs")
+        counter2_bool = False
+        return task.ROTAT_RIGHT, nei_med, x
+    else:
+        # print('success')
+        if counter2_bool:
+            counter2 = counter2 + 1
+        else:
+            counter2 = 0
+        counter2_bool = True
+        return -1, -1, -1
 
 
 def rect_dot(frame, area1, area2, number):
@@ -71,7 +91,6 @@ def rect_dot(frame, area1, area2, number):
                 return length_line(approxCourve1[2], approxCourve1[dot_num1 - 1]) + \
                        length_line(approxCourve2[2], approxCourve2[1])
             elif number == 2:
-                print(1)
                 return nei_abf(approxCourve1[0], approxCourve1[1]), \
                        nei_abf(approxCourve2[0], approxCourve2[dot_num2 - 1])
             elif number == 3:
@@ -89,7 +108,7 @@ def rect_dot(frame, area1, area2, number):
                 return length_line(approxCourve1[2], approxCourve1[1]) + \
                        length_line(approxCourve2[2], approxCourve2[dot_num2 - 1])
             elif number == 2:
-                print(2)
+                # print(2)
                 return nei_abf(approxCourve1[0], approxCourve1[dot_num1 - 1]), \
                        nei_abf(approxCourve2[0], approxCourve2[1])
             elif number == 3:
@@ -98,7 +117,7 @@ def rect_dot(frame, area1, area2, number):
 
 def double_bridge(frame):
     global _jump1, _jump2
-
+    global goal, counter_bool, counter
     frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(frame_hsv, hsv_low, hsv_high)
 
@@ -119,19 +138,28 @@ def double_bridge(frame):
         area.append(cv2.contourArea(cnt))
 
     # area为所有的cnt的面积
-
     area_sort = area
     area_sort.sort(reverse=True)  # 根据面积序降的area，排序结果
 
     if len(cnts) < 2:
-        pass
+        if counter_bool:
+            counter = 0
+        else:
+            counter = counter + 1
+        counter_bool = False
+        if counter == 40:
+            return task.Jump_Standard, -1, -1
+        else:
+            return -1, -1, -1
+    else:
+        counter_bool = True  # 上一帧是cnts>2, 下一帧清空
 
     area1 = cnts[area.index(area_sort[0])]  # 最大的轮廓
     area2 = cnts[area.index(area_sort[1])]  # 第二大的轮廓
 
     [nei1, abf1], [nei2, abf2] = rect_dot(frame, area1=area1, area2=area2, number=2)
     if [nei1, abf1] == [0, 0] and [nei2, abf2] == [0, 0]:
-        pass
+        return -1, -1, -1
     # TODO 根据实际图像尺寸修改
     y_coors = np.arange(1, 480)
     x_coors = []
@@ -141,23 +169,36 @@ def double_bridge(frame):
         x_coors.append(x_coor)
         cv2.circle(frame, (int(x_coor), int(y)), 2, (0, 0, 255), -1)
 
-    nei_median, _ = np.polyfit(y_coors, x_coors, 1)  # 拟合直线
-
-    if (nei_median < 0.1) and (nei_median > -0.1) and not _jump1:  # TODO 判断直行的条件,
-        print("无需转向")
-        if rect_dot(frame, area1, area2, 1) >= 40 and not _jump1:  # TODO根据最下的判断是否可以跳跃
-            print("跳跃")
-            _jump1 = True
-        else:
-            print("直行")
-    else:
-        k_median = 1 / nei_median  # 斜率y/x
-        print("转向")
-        if (nei_median < 0.1) and (nei_median > -0.1) and not _jump2:
-            print("直行")
-        elif rect_dot(frame, area1, area2, 3) < 40 and not _jump2:  # TODO 判断跳跃条件
-            print("跳跃")
-            _jump2 = True
-
+    nei_median, intercept = np.polyfit(y_coors, x_coors, 1)  # 拟合直线
+    x_mid = nei_median * (frame.shape[1] // 2) + intercept
+    if counter2 < 30:
+        init_adjust(1 / nei_median, x_mid)  # 判断初始位置是否正确
     cv2.imshow('frame', frame)
     cv2.waitKey(1)
+    if goal == 1:
+        if nei_median == 0:
+            k_median = 10000
+        else:
+            k_median = 1 / nei_median
+
+        if rect_dot(frame, area1, area2, 1) >= 40 and not _jump1:  # TODO根据最下的判断是否可以跳跃
+            goal = 2
+            _jump1 = True
+            return task.Jump_Standard, -1, -1
+        else:
+            return task.VISION, k_median, x_mid
+    elif goal == 2:
+        if nei_median == 0:
+            k_median = 10000
+        else:
+            k_median = 1 / nei_median
+
+        if rect_dot(frame, area1, area2, 3) > 10000 and not _jump2:  # TODO 判断跳跃条件
+            goal = 3
+            _jump2 = True
+            # print(goal)
+            return task.Jump_Standard, -1, -1
+        else:
+            return task.VISION, k_median, x_mid
+    elif goal == 3:
+        return task.HALT, -1, -1
